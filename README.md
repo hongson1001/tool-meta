@@ -1,14 +1,34 @@
 # FB Auto Post Tool
 
-Tool desktop tự động đăng bài và comment lên nhiều Facebook Fanpage do bạn quản lý.
+Tool desktop tự động đăng bài + comment affiliate lên nhiều Facebook Fanpage thuộc nhiều tài khoản cá nhân, lấy nội dung từ Google Sheets.
+
+## Mô hình sử dụng
+
+```text
+N tài khoản FB cá nhân (~10)
+  ├─ Tài khoản 1 → quản lý ~5 page
+  ├─ Tài khoản 2 → quản lý ~5 page
+  └─ ... → Tổng: ~50+ page
+              ↓
+        1 Sheet row = 1 bài đăng (caption + video + Shopee link)
+              ↓
+  Tool chia 5 batch × 10 page, delay 3–5 phút giữa batch
+              ↓
+  Mỗi page: đăng bài + 1 comment gắn Shopee link
+              ↓
+  Update Sheet: đánh dấu "Đã dùng" + ghi FB post ID
+```
 
 ## Tính năng chính
 
-- ✅ Đăng bài (text + ảnh) lên nhiều Fanpage cùng lúc
-- ✅ Tự động comment 5–10 comment có sẵn (gắn link Shopee / affiliate) vào bài vừa đăng
-- ✅ Đặt lịch đăng bài theo giờ / ngày
-- ✅ Quản lý template comment theo nhóm
-- ✅ Xem lịch sử, thống kê, log chi tiết
+- ✅ Đăng bài (caption + link video YouTube/TikTok/IG) lên **50+ Fanpage** thuộc nhiều tài khoản cá nhân
+- ✅ Chế độ **Cấp 2 — Cân bằng**: 5 batch × 10 page song song, delay 3–5 phút giữa batch, ~20 phút/đợt
+- ✅ **Nguồn nội dung từ Google Sheets** (caption, link video, link Shopee, text comment)
+- ✅ **1 comment / bài** tự động gắn link sản phẩm Shopee/affiliate
+- ✅ Tự động **update Sheet** sau khi đăng: đánh dấu đã dùng + lưu FB post ID
+- ✅ Biến thể nội dung nhẹ (emoji/câu mở-kết) để tránh FB flag duplicate — có toggle "đăng y hệt"
+- ✅ Đặt lịch đăng bài theo giờ / ngày / tuần
+- ✅ Dashboard xem lịch sử, thống kê, link video gốc + link FB post
 - ✅ Build thành file `.exe` dùng trên Windows (không cần cài Python)
 
 ## Công nghệ sử dụng
@@ -19,7 +39,9 @@ Tool desktop tự động đăng bài và comment lên nhiều Facebook Fanpage 
 | UI | Streamlit |
 | Database | SQLite (SQLAlchemy ORM) |
 | HTTP Client | Requests |
+| Nguồn nội dung | Google Sheets API (gspread) |
 | Lập lịch | APScheduler |
+| Chạy song song | ThreadPoolExecutor (batch 10 page) |
 | Đóng gói | PyInstaller |
 
 ## Bắt đầu nhanh
@@ -40,7 +62,7 @@ streamlit run src/ui/app.py
 
 ## Mục lục
 
-1. [Hướng dẫn cài đặt môi trường](#1-hướng-dẫn-cài-đặt-môi-trường)
+1. [Hướng dẫn cài đặt môi trường](#1-hướng-dẫn-cài-đặt-môi-trường) (gồm Facebook App + Google Cloud Service Account)
 2. [Danh sách thư viện cần cài](#2-danh-sách-thư-viện-cần-cài)
 3. [Setup Project Python](#3-setup-project-python)
 4. [Các chức năng cần làm](#4-các-chức-năng-cần-làm)
@@ -177,6 +199,68 @@ GET https://graph.facebook.com/v19.0/oauth/access_token?
   fb_exchange_token={SHORT_LIVED_TOKEN}
 ```
 
+## 1.7: Setup Google Cloud + Google Sheets API
+
+Nội dung bài đăng (caption, video link, Shopee link, comment) được quản lý trong **Google Sheets**. Tool đọc Sheet khi đăng và update trạng thái sau khi đăng thành công.
+
+### 1.7.1: Tạo Google Cloud Project
+
+1. Truy cập: <https://console.cloud.google.com/>
+2. Tạo **New Project** → tên: `FB Auto Post Tool`
+3. Chọn project vừa tạo
+
+### 1.7.2: Bật Google Sheets API + Google Drive API
+
+1. Vào **APIs & Services → Library**
+2. Tìm và bật 2 API:
+   - **Google Sheets API**
+   - **Google Drive API** (cần để share Sheet)
+
+### 1.7.3: Tạo Service Account
+
+1. **APIs & Services → Credentials** → **Create Credentials → Service Account**
+2. Điền thông tin:
+   - Service account name: `fb-auto-post-bot`
+   - Role: để trống (không cần quyền GCP)
+3. Nhấn **Done**
+
+### 1.7.4: Tải `credentials.json`
+
+1. Vào Service Account vừa tạo → tab **Keys**
+2. **Add Key → Create new key → JSON**
+3. File JSON tự động download → đổi tên thành `credentials.json`
+4. Copy vào thư mục `data/` của project (xem mục 3.2)
+
+⚠️ **TUYỆT ĐỐI không commit file này lên Git**. Đã có trong `.gitignore`.
+
+### 1.7.5: Chuẩn bị Google Sheet
+
+1. Tạo Sheet mới: <https://sheets.new>
+2. Đặt tên (vd: `FB Content Queue`)
+3. Tab đầu tiên đặt tên `posts`, tạo header theo cấu trúc sau:
+
+| Cột | Header | Mô tả | Ví dụ |
+|---|---|---|---|
+| A | `video_link` | Link video (YouTube/TikTok/IG) | `https://youtu.be/abc123` |
+| B | `caption` | Nội dung bài đăng trên FB | `Chị em xem review son này nè 😍` |
+| C | `shopee_link` | Link sản phẩm Shopee/affiliate | `https://s.shopee.vn/xyz` |
+| D | `comment_text` | Text comment tự động (sẽ đính kèm `shopee_link`) | `Link mua tại đây nha chị em` |
+| E | `used` | Đã đăng chưa (tool auto-update) | `FALSE` / `TRUE` |
+| F | `posted_at` | Ngày giờ đăng (tool auto-fill) | `2026-04-22 14:30` |
+| G | `fb_post_ids` | JSON các FB post ID đã đăng (tool auto-fill) | `{"page_123": "123_456"}` |
+
+### 1.7.6: Share Sheet cho Service Account
+
+1. Mở `credentials.json` bằng notepad → tìm field `client_email`, copy giá trị (dạng `fb-auto-post-bot@xxx.iam.gserviceaccount.com`)
+2. Trong Google Sheet → nhấn **Share** (góc phải)
+3. Paste email service account → chọn quyền **Editor** → **Send**
+
+### 1.7.7: Lấy Sheet ID
+
+Trong URL Sheet có dạng: `https://docs.google.com/spreadsheets/d/`**`SHEET_ID_HERE`**`/edit`
+
+Copy phần `SHEET_ID_HERE` để điền vào file `.env` (mục 3.3).
+
 ## Checklist Setup
 
 - [ ] Cài Python 3.11+ và tick "Add to PATH"
@@ -187,6 +271,10 @@ GET https://graph.facebook.com/v19.0/oauth/access_token?
 - [ ] Lấy được **User Access Token** từ Graph API Explorer
 - [ ] Gọi `/me/accounts` lấy được **Page Access Token** cho từng page
 - [ ] (Tùy) Convert sang Long-lived Token
+- [ ] Tạo Google Cloud Project + bật Sheets API & Drive API
+- [ ] Tạo Service Account + tải `credentials.json`
+- [ ] Tạo Sheet với đúng 7 cột (A–G) + share cho service account email
+- [ ] Lấy **Sheet ID** để điền `.env`
 
 ---
 
@@ -214,6 +302,14 @@ GET https://graph.facebook.com/v19.0/oauth/access_token?
 |---|---|---|
 | `requests` | 2.31.0 | Gọi HTTP tới Facebook Graph API |
 | `python-dotenv` | 1.0.0 | Đọc file `.env` chứa config |
+
+### Google Sheets Integration
+
+| Thư viện | Phiên bản | Công dụng |
+|---|---|---|
+| `gspread` | 6.0.0 | Client đọc/ghi Google Sheets |
+| `google-auth` | 2.28.0 | Auth Service Account |
+| `google-auth-oauthlib` | 1.2.0 | OAuth flow (nếu mở rộng sau) |
 
 ### UI — Streamlit
 
@@ -264,6 +360,11 @@ Copy nội dung sau vào file `requirements.txt` ở root project:
 requests==2.31.0
 python-dotenv==1.0.0
 
+# Google Sheets
+gspread==6.0.0
+google-auth==2.28.0
+google-auth-oauthlib==1.2.0
+
 # UI
 streamlit==1.32.0
 streamlit-option-menu==0.3.12
@@ -307,7 +408,7 @@ pip list
 Hoặc test nhanh:
 
 ```bash
-python -c "import requests, streamlit, sqlalchemy, PIL, apscheduler; print('OK')"
+python -c "import requests, streamlit, sqlalchemy, PIL, apscheduler, gspread; print('OK')"
 ```
 
 → In ra `OK` là đầy đủ.
@@ -372,7 +473,7 @@ pip install -r requirements.txt
 
 ## 3.2: Cấu trúc thư mục đầy đủ
 
-```
+```text
 fb-auto-post/
 ├── venv/                          # Môi trường ảo (KHÔNG commit)
 ├── src/
@@ -383,27 +484,31 @@ fb-auto-post/
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── page.py                # Model Fanpage
-│   │   ├── post.py                # Model bài đăng
-│   │   ├── post_log.py            # Model log
-│   │   └── comment_template.py    # Model mẫu comment
+│   │   ├── post.py                # Model bài đăng (1 row Sheet = 1 post)
+│   │   ├── post_log.py            # Model log (per page)
+│   │   └── sheets_config.py       # Model config Google Sheets
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── fb_client.py           # Wrapper gọi Graph API
-│   │   ├── poster.py              # Logic đăng bài + comment
+│   │   ├── sheets_client.py       # Wrapper đọc/ghi Google Sheets
+│   │   ├── poster.py              # Logic đăng bài + 1 comment
+│   │   ├── batch_runner.py        # ThreadPoolExecutor chạy 10 page/batch
+│   │   ├── variant.py             # Biến thể nội dung (emoji/câu mở-kết)
 │   │   ├── scheduler.py           # APScheduler background
-│   │   └── image_utils.py         # Resize, nén ảnh
+│   │   └── image_utils.py         # Resize, nén ảnh (nếu cần)
 │   └── ui/
 │       ├── __init__.py
 │       ├── app.py                 # Streamlit entry point
 │       ├── page_manager.py        # Tab quản lý fanpage
-│       ├── post_creator.py        # Tab tạo bài đăng
-│       ├── comment_templates.py   # Tab mẫu comment
+│       ├── post_creator.py        # Tab tạo bài từ Sheet
+│       ├── sheets_config.py       # Tab config Google Sheets
 │       ├── scheduler_view.py      # Tab lịch đăng
 │       ├── history.py             # Tab lịch sử
 │       └── settings.py            # Tab cài đặt
 ├── data/
 │   ├── posts.db                   # SQLite DB (tự tạo khi chạy lần đầu)
-│   └── uploads/                   # Ảnh user upload
+│   ├── credentials.json           # Google Service Account key (KHÔNG commit)
+│   └── uploads/                   # Ảnh thumbnail (nếu có)
 ├── logs/
 │   └── app.log                    # File log
 ├── .env                           # Config (KHÔNG commit)
@@ -423,6 +528,11 @@ FB_APP_ID=123456789012345
 FB_APP_SECRET=abc123def456ghi789
 FB_API_VERSION=v19.0
 
+# Google Sheets
+GOOGLE_CREDENTIALS_PATH=data/credentials.json
+GOOGLE_SHEET_ID=your-sheet-id-here
+GOOGLE_SHEET_TAB=posts
+
 # Database
 DB_PATH=data/posts.db
 
@@ -434,15 +544,25 @@ MAX_UPLOAD_SIZE_MB=10
 LOG_PATH=logs/app.log
 LOG_LEVEL=INFO
 
-# Delay mặc định (giây)
+# Batch posting (Cấp 2 — Cân bằng)
+BATCH_SIZE=10
+MIN_BATCH_DELAY=180
+MAX_BATCH_DELAY=300
+
+# Delay trong 1 batch (giây giữa các page trong 1 batch)
+MIN_PAGE_DELAY_IN_BATCH=2
+MAX_PAGE_DELAY_IN_BATCH=8
+
+# Delay comment sau khi post (giây)
 MIN_COMMENT_DELAY=15
 MAX_COMMENT_DELAY=30
-MIN_PAGE_DELAY=60
-MAX_PAGE_DELAY=120
 
-# Giới hạn
+# Giới hạn an toàn
 MAX_POSTS_PER_PAGE_PER_DAY=20
-MAX_COMMENTS_PER_POST=10
+COMMENTS_PER_POST=1
+
+# Biến thể nội dung (mặc định bật để tránh flag duplicate)
+ENABLE_CONTENT_VARIANT=true
 ```
 
 Sau đó copy thành `.env` và điền thông tin thật:
@@ -465,6 +585,11 @@ __pycache__/
 
 # Environment
 .env
+
+# Secrets (TUYỆT ĐỐI KHÔNG COMMIT)
+data/credentials.json
+*credentials*.json
+*service-account*.json
 
 # Database & user data
 data/posts.db
@@ -523,19 +648,37 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).parent.parent
 
+# Facebook
 FB_APP_ID = os.getenv("FB_APP_ID")
 FB_APP_SECRET = os.getenv("FB_APP_SECRET")
 FB_API_VERSION = os.getenv("FB_API_VERSION", "v19.0")
 FB_API_BASE = f"https://graph.facebook.com/{FB_API_VERSION}"
 
+# Google Sheets
+GOOGLE_CREDENTIALS_PATH = BASE_DIR / os.getenv("GOOGLE_CREDENTIALS_PATH", "data/credentials.json")
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
+GOOGLE_SHEET_TAB = os.getenv("GOOGLE_SHEET_TAB", "posts")
+
+# Paths
 DB_PATH = BASE_DIR / os.getenv("DB_PATH", "data/posts.db")
 UPLOAD_DIR = BASE_DIR / os.getenv("UPLOAD_DIR", "data/uploads")
 LOG_PATH = BASE_DIR / os.getenv("LOG_PATH", "logs/app.log")
 
+# Batch posting (Cấp 2 — Cân bằng)
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", 10))
+MIN_BATCH_DELAY = int(os.getenv("MIN_BATCH_DELAY", 180))
+MAX_BATCH_DELAY = int(os.getenv("MAX_BATCH_DELAY", 300))
+MIN_PAGE_DELAY_IN_BATCH = int(os.getenv("MIN_PAGE_DELAY_IN_BATCH", 2))
+MAX_PAGE_DELAY_IN_BATCH = int(os.getenv("MAX_PAGE_DELAY_IN_BATCH", 8))
+
+# Comment
 MIN_COMMENT_DELAY = int(os.getenv("MIN_COMMENT_DELAY", 15))
 MAX_COMMENT_DELAY = int(os.getenv("MAX_COMMENT_DELAY", 30))
-MIN_PAGE_DELAY = int(os.getenv("MIN_PAGE_DELAY", 60))
-MAX_PAGE_DELAY = int(os.getenv("MAX_PAGE_DELAY", 120))
+COMMENTS_PER_POST = int(os.getenv("COMMENTS_PER_POST", 1))
+
+# Safety
+MAX_POSTS_PER_PAGE_PER_DAY = int(os.getenv("MAX_POSTS_PER_PAGE_PER_DAY", 20))
+ENABLE_CONTENT_VARIANT = os.getenv("ENABLE_CONTENT_VARIANT", "true").lower() == "true"
 
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -556,19 +699,22 @@ LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 | created_at | DATETIME | Ngày thêm |
 | updated_at | DATETIME | Ngày cập nhật cuối |
 
-### Bảng `posts` — Lưu bài đăng
+### Bảng `posts` — Lưu bài đăng (1 row Sheet = 1 post)
 
 | Cột | Kiểu | Mô tả |
 |---|---|---|
 | id | INTEGER PK | |
-| content | TEXT | Nội dung bài |
-| image_paths | TEXT | JSON array các ảnh |
+| sheet_row_index | INTEGER | Chỉ số dòng trong Sheet (để update lại) |
+| caption | TEXT | Caption bài đăng (copy từ Sheet cột B) |
+| video_link | TEXT | Link video YouTube/TikTok/IG (cột A Sheet) |
+| shopee_link | TEXT | Link sản phẩm Shopee (cột C Sheet) |
+| comment_text | TEXT | Text comment (cột D Sheet) |
 | target_page_ids | TEXT | JSON array page_id đăng lên |
-| comment_template_group | TEXT | Nhóm template dùng |
-| comments_per_post | INTEGER | Số comment mỗi bài (5-10) |
-| scheduled_at | DATETIME | Giờ đặt lịch đăng |
-| status | TEXT | pending / running / success / failed / cancelled |
+| scheduled_at | DATETIME | Giờ đặt lịch đăng (null = đăng ngay) |
+| variant_mode | TEXT | `identical` / `auto_variant` |
+| status | TEXT | pending / running / success / partial / failed / cancelled |
 | created_at | DATETIME | |
+| completed_at | DATETIME | Thời điểm hoàn tất toàn bộ batch |
 
 ### Bảng `post_logs` — Log chi tiết từng page
 
@@ -577,21 +723,25 @@ LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 | id | INTEGER PK | |
 | post_id | FK | Liên kết `posts.id` |
 | page_id | FK | Liên kết `pages.id` |
+| batch_index | INTEGER | Batch thứ mấy (1-5) |
+| applied_caption | TEXT | Caption thực tế đã đăng (sau khi biến thể) |
 | fb_post_id | TEXT | ID bài trên FB (dạng `pageId_postId`) |
-| comments_posted | INTEGER | Số comment đã đăng |
+| fb_post_url | TEXT | URL mở bài trên FB |
+| comment_posted | BOOLEAN | Đã post comment chưa |
+| fb_comment_id | TEXT | ID comment trên FB |
 | error_message | TEXT | Lỗi nếu có |
 | status | TEXT | success / failed |
 | posted_at | DATETIME | |
 
-### Bảng `comment_templates` — Mẫu comment
+### Bảng `sheets_config` — Config Google Sheets
 
 | Cột | Kiểu | Mô tả |
 |---|---|---|
 | id | INTEGER PK | |
-| content | TEXT | Nội dung comment + link |
-| group_name | TEXT | Nhóm (vd: "Shopee sức khỏe") |
+| sheet_id | TEXT | Google Sheet ID |
+| tab_name | TEXT | Tên tab trong Sheet (mặc định `posts`) |
+| last_synced_at | DATETIME | Lần đồng bộ Sheet gần nhất |
 | is_active | BOOLEAN | |
-| created_at | DATETIME | |
 
 ### Bảng `settings` — Cài đặt chung
 
@@ -666,140 +816,276 @@ Tool được chia thành **8 module** chính.
 - Khi đăng bài gặp 401 → đánh dấu page `token_expired`
 - UI hiển thị cảnh báo, yêu cầu user update token
 
-## 🎯 MODULE 2: QUẢN LÝ MẪU COMMENT
+## 🎯 MODULE 2: GOOGLE SHEETS INTEGRATION
 
-### 2.1: Tạo template comment
+### 2.1: Config kết nối Sheet
 
-- **Input**: Nội dung comment + Nhóm (vd: "Shopee sức khỏe", "TikTok Shop")
-- **Lưu vào**: Bảng `comment_templates`
+- **Input**: Sheet ID, Tab name, đường dẫn `credentials.json`
+- **Xử lý**:
+  - Authorize bằng `google.oauth2.service_account.Credentials`
+  - Mở Sheet qua `gspread.authorize(creds).open_by_key(sheet_id)`
+  - Verify tab tồn tại, header đúng 7 cột (A–G)
+- **Lưu vào**: Bảng `sheets_config`
 
-### 2.2: Quản lý template theo nhóm
+### 2.2: Đọc danh sách bài chưa đăng
 
-- **List view**: hiển thị các nhóm + số lượng template mỗi nhóm
-- **Detail view**: vào từng nhóm xem/sửa/xóa template
-- **Search**: tìm template theo từ khóa
+```python
+# src/services/sheets_client.py
+def fetch_pending_posts() -> list[SheetRow]:
+    """Lấy các dòng có used = FALSE."""
+    rows = sheet.get_all_records()
+    return [
+        SheetRow(row_index=i+2, **r)
+        for i, r in enumerate(rows)
+        if str(r.get("used", "")).upper() != "TRUE"
+    ]
+```
 
-### 2.3: Import / Export template
+Trong UI **Tạo bài đăng** (Module 3), bạn sẽ chọn 1 row từ danh sách này.
 
-- **Import**: Upload file `.txt` (mỗi dòng 1 comment), chọn nhóm → bulk insert
-- **Export**: Xuất nhóm ra file `.txt` để backup
+### 2.3: Update Sheet sau khi đăng
 
-### 2.4: Preview comment
+Sau khi đăng xong 1 post (tất cả 50 page hoàn thành):
 
-- Hiển thị preview text
-- Nếu có link Shopee/TikTok → render thumbnail
+| Cột | Update |
+|---|---|
+| E `used` | `TRUE` |
+| F `posted_at` | Thời điểm hiện tại |
+| G `fb_post_ids` | JSON `{page_id: fb_post_id}` cho từng page đăng thành công |
 
-## 🎯 MODULE 3: TẠO BÀI ĐĂNG
+```python
+sheet.update(f"E{row_index}:G{row_index}", [[
+    "TRUE",
+    datetime.now().strftime("%Y-%m-%d %H:%M"),
+    json.dumps(fb_post_ids_by_page)
+]])
+```
 
-### 3.1: Form nhập bài
+### 2.4: Preview row trước khi đăng
 
-| Trường | Kiểu | Mô tả |
+UI hiển thị:
+
+- Caption (cột B)
+- Thumbnail từ link video (nếu có) — dùng `oEmbed` API của YT/TikTok
+- Link Shopee (cột C) — preview thumbnail sản phẩm nếu có
+- Text comment (cột D)
+
+### 2.5: Xử lý lỗi Sheet
+
+| Lỗi | Cách xử lý |
+|---|---|
+| `credentials.json` sai/thiếu | UI báo, hướng dẫn tạo lại |
+| Service account chưa được share | UI báo kèm email service account để user share |
+| Sheet ID sai | Báo lỗi cụ thể |
+| Header thiếu cột | Báo rõ cột nào thiếu, có nút "Tạo header tự động" |
+| Sheet quota (429) | Retry với exponential backoff (1s, 2s, 4s) |
+
+## 🎯 MODULE 3: TẠO BÀI ĐĂNG (từ Google Sheet)
+
+### 3.1: Chọn nguồn bài
+
+UI hiển thị bảng các row `used = FALSE` từ Sheet:
+
+| Row | Caption | Video link | Shopee link | Comment |
+| --- | --- | --- | --- | --- |
+| 2 | Chị em xem review son này nè 😍 | youtu.be/abc | s.shopee.vn/xyz | Link mua nha chị em |
+| 3 | Mặt nạ giá rẻ mà xịn | tiktok.com/... | s.shopee.vn/def | Mình dùng 1 tháng rồi |
+
+Click 1 row → load vào form (các trường pre-fill, có thể sửa trước khi đăng).
+
+### 3.2: Form tạo bài
+
+| Trường | Nguồn | Mô tả |
 |---|---|---|
-| Nội dung bài | Textarea | Nội dung post |
-| Ảnh | File upload | 1 hoặc nhiều ảnh |
-| Chọn pages đăng lên | Multi-select | Checkbox nhiều page |
-| Nhóm comment | Select | Chọn 1 nhóm template |
-| Số lượng comment | Number input | 5–10, random |
-| Delay giữa comment | Slider | 15–60 giây |
-| Delay giữa page | Slider | 60–300 giây |
+| Caption | Từ Sheet (sửa được) | Nội dung bài đăng trên FB |
+| Video link | Từ Sheet (sửa được) | Sẽ paste vào cuối caption để FB render preview |
+| Shopee link | Từ Sheet (sửa được) | Link sản phẩm cho comment |
+| Comment text | Từ Sheet (sửa được) | Text comment, sẽ nối với Shopee link |
+| Chọn pages đăng lên | Multi-select | Default: chọn tất cả 50 page active |
+| Batch size | Number (default 10) | Số page chạy song song / batch |
+| Delay giữa batch (giây) | Slider (180–300) | Random trong khoảng |
+| Biến thể nội dung | Toggle | Mặc định **ON** (khuyến nghị) / OFF = đăng y hệt |
 | Chế độ | Radio | ⚡ Đăng ngay / ⏰ Đặt lịch |
 | Thời gian đăng | Datetime picker | Khi chọn "Đặt lịch" |
 
-### 3.2: Xử lý ảnh trước khi upload
+### 3.3: Biến thể nội dung (khi toggle ON)
 
-- **Resize** về max 1200px chiều dài
-- **Convert** HEIC/HEIF → JPG
-- **Nén** quality 85%
-- **Giới hạn** 10MB mỗi ảnh
+Mặc định **ON** để tránh FB flag duplicate khi đăng 50 page cùng 1 lúc.
 
-### 3.3: Preview bài đăng
+**Cơ chế biến thể** (`src/services/variant.py`):
 
-- Nội dung bài
-- Thumbnail các ảnh
-- Danh sách page sẽ đăng lên
-- 5–10 comment random từ nhóm đã chọn
-- Dự kiến thời gian hoàn thành
+- **Emoji đầu/cuối**: random 1 trong 5 bộ emoji set
+- **Câu mở đầu**: random 1 trong 5 template (vd: "Chị em ơi", "Mom nào đang tìm", "Hôm nay mình chia sẻ", ...)
+- **Câu kết**: random 1 trong 5 template (vd: "Link ở comment nha", "Ai cần inbox mình", ...)
+- **Hashtag**: random 1 trong 3 bộ hashtag
 
-### 3.4: Xác nhận & đăng
+Kết quả: 50 page nhận 50 version **khác nhau ~5–10%** nhưng cốt lõi vẫn là caption gốc.
 
-- Lưu vào bảng `posts` với `status = pending`
-- Nếu "Đăng ngay" → push vào queue background
+Khi OFF: 50 page nhận caption y hệt từ Sheet (rủi ro cao, chỉ dùng khi cần thiết).
+
+### 3.4: Xây caption cuối cùng gửi lên FB
+
+```python
+def build_final_caption(base_caption: str, video_link: str, variant: bool) -> str:
+    text = apply_variant(base_caption) if variant else base_caption
+    return f"{text}\n\n{video_link}"
+```
+
+FB sẽ tự render preview (thumbnail + play button) cho link video.
+
+### 3.5: Preview trước khi đăng
+
+- Caption mẫu (1 version biến thể random để user xem)
+- Thumbnail video từ oEmbed
+- Danh sách 50 page sẽ đăng
+- Comment text + Shopee link
+- Dự kiến thời gian hoàn thành (50 page / 10 batch-size = 5 batch × ~4 phút/batch ≈ 20 phút)
+
+### 3.6: Xác nhận & đăng
+
+- Lưu vào bảng `posts` với `status = pending`, liên kết `sheet_row_index`
+- Nếu "Đăng ngay" → push vào `batch_runner`
 - Nếu "Đặt lịch" → APScheduler trigger khi tới giờ
 
-## 🎯 MODULE 4: ENGINE ĐĂNG BÀI + COMMENT
+## 🎯 MODULE 4: ENGINE ĐĂNG BÀI + COMMENT (Batch mode)
 
-### 4.1: Upload ảnh lên Facebook
+### 4.1: Chiến lược đăng — Cấp 2 Cân bằng
 
-Gọi `POST /{page_id}/photos` với `published=false`, lấy `photo_id`
-
-### 4.2: Đăng bài
-
-**Case 1: Chỉ text**
-```
-POST /{page_id}/feed
-  message={content}
-  access_token={page_token}
-```
-
-**Case 2: 1 ảnh + text**
-```
-POST /{page_id}/photos
-  caption={content}
-  source=@file.jpg
-  access_token={page_token}
+```text
+50 page → chia 5 batch × 10 page
+│
+├─ Batch 1 (10 page chạy song song qua ThreadPoolExecutor)
+│     ├─ Page 1: build caption (variant) → post → sleep 2-8s → comment
+│     ├─ Page 2: build caption (variant) → post → sleep 2-8s → comment
+│     └─ ... (10 page concurrent)
+│
+├─ Delay 180-300 giây (random)
+│
+├─ Batch 2 (10 page khác)
+│
+└─ ... Tổng: ~20 phút cho 50 page
 ```
 
-**Case 3: Nhiều ảnh + text**
+### 4.2: Đăng bài (caption + video link)
 
-1. Upload từng ảnh với `published=false` → lấy list `photo_id`
-2. Gọi:
+Bài đăng dạng **text với link video** — FB tự render preview. KHÔNG upload video native.
+
+```python
+def post_to_page(page: Page, caption: str, video_link: str) -> str:
+    final_text = f"{caption}\n\n{video_link}"
+    res = requests.post(
+        f"{FB_API_BASE}/{page.page_id}/feed",
+        data={"message": final_text, "access_token": page.access_token},
+        timeout=30,
+    )
+    res.raise_for_status()
+    return res.json()["id"]  # dạng "pageId_postId"
 ```
-POST /{page_id}/feed
-  message={content}
-  attached_media=[{"media_fbid":"photo_id_1"},{"media_fbid":"photo_id_2"}]
-  access_token={page_token}
+
+### 4.3: Đăng 1 comment sau bài
+
+```python
+def post_comment(page: Page, fb_post_id: str, comment_text: str, shopee_link: str):
+    time.sleep(random.uniform(MIN_COMMENT_DELAY, MAX_COMMENT_DELAY))
+    final_comment = f"{comment_text}\n{shopee_link}"
+    res = requests.post(
+        f"{FB_API_BASE}/{fb_post_id}/comments",
+        data={"message": final_comment, "access_token": page.access_token},
+        timeout=30,
+    )
+    res.raise_for_status()
+    return res.json()["id"]
 ```
 
-### 4.3: Loop comment tự động
+### 4.4: Batch Runner — song song 10 page/batch
 
-- Lấy random 5–10 comment từ nhóm template
-- Shuffle thứ tự
-- Với mỗi comment:
-  - Gọi `POST /{post_id}/comments`
-  - Delay random 15–30s
-  - Log thành công / thất bại
-- Nếu 1 comment fail → skip, tiếp comment tiếp theo
+```python
+# src/services/batch_runner.py
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import islice
 
-### 4.4: Loop qua nhiều page
-
-```
-for page in selected_pages:
-    try:
-        post_id = upload_and_post(page)
-        comment_loop(post_id, page)
-    except Exception as e:
-        log_error(page, e)
-        continue
+def run_post_campaign(post: Post, pages: list[Page]):
+    batches = list(chunked(pages, BATCH_SIZE))  # 10 page / batch
     
-    delay(60-120s random)
+    for batch_idx, batch in enumerate(batches, 1):
+        with ThreadPoolExecutor(max_workers=BATCH_SIZE) as executor:
+            futures = {
+                executor.submit(post_one_page, post, page, batch_idx): page
+                for page in batch
+            }
+            for future in as_completed(futures):
+                page = futures[future]
+                try:
+                    log_success(post, page, future.result())
+                    update_progress()
+                except Exception as e:
+                    log_failure(post, page, e)
+        
+        # Delay giữa batch (không áp dụng cho batch cuối)
+        if batch_idx < len(batches):
+            time.sleep(random.uniform(MIN_BATCH_DELAY, MAX_BATCH_DELAY))
+    
+    # Hoàn tất → update Sheet
+    sheets_client.mark_row_done(post.sheet_row_index, collected_fb_ids)
 ```
 
-Hiển thị **progress bar** realtime trên Streamlit UI.
+### 4.5: Post 1 page (trong batch)
 
-### 4.5: Xử lý lỗi
+```python
+def post_one_page(post: Post, page: Page, batch_idx: int) -> dict:
+    # Stagger nhẹ để không burst 10 request cùng 1 nanosecond
+    time.sleep(random.uniform(MIN_PAGE_DELAY_IN_BATCH, MAX_PAGE_DELAY_IN_BATCH))
+    
+    # Biến thể caption nếu bật
+    caption = apply_variant(post.caption) if post.variant_mode == "auto_variant" else post.caption
+    
+    fb_post_id = post_to_page(page, caption, post.video_link)
+    fb_comment_id = post_comment(page, fb_post_id, post.comment_text, post.shopee_link)
+    
+    return {
+        "fb_post_id": fb_post_id,
+        "fb_post_url": f"https://facebook.com/{fb_post_id.replace('_', '/posts/')}",
+        "applied_caption": caption,
+        "fb_comment_id": fb_comment_id,
+    }
+```
+
+### 4.6: Cập nhật Sheet sau khi hoàn tất
+
+Khi toàn bộ 5 batch xong:
+
+```python
+sheets_client.update_row(
+    row_index=post.sheet_row_index,
+    used=True,
+    posted_at=datetime.now(),
+    fb_post_ids={page.page_id: log.fb_post_id for log in post.logs if log.status == "success"},
+)
+```
+
+### 4.7: Progress UI realtime (Streamlit)
+
+- Progress bar tổng: `completed_pages / total_pages`
+- Status text: `Batch 2/5 — đang chạy 10 page...`
+- Bảng live: mỗi page → ✅/❌ + FB post URL / error message
+- Countdown giữa batch: `⏳ Chờ 2:45 trước batch tiếp theo`
+
+### 4.8: Xử lý lỗi
 
 | Lỗi | Hành động |
 |---|---|
-| Token hết hạn (401) | Pause page đó, log, báo user |
-| Rate limit (#4, #17) | Delay gấp đôi, retry 1 lần |
-| Page bị hạn chế | Skip, tiếp page khác |
-| Network timeout | Retry 3 lần, delay tăng dần |
-| Ảnh upload fail | Thử lại 2 lần, nếu vẫn fail → skip ảnh |
+| Token hết hạn (401 / #190) | Pause page đó, log, báo user, tiếp page khác |
+| Rate limit (#4, #17) | Delay gấp đôi, retry 1 lần trong batch; nếu vẫn fail → skip |
+| Page bị hạn chế (#368) | Skip page, log cảnh báo "page có thể đang bị FB hạn chế" |
+| Network timeout | Retry 3 lần với backoff 2s/4s/8s |
+| Sheet update fail (quota) | Retry backoff; nếu vẫn fail → log để user update thủ công |
+| Fail >50% 1 batch | Pause toàn bộ, yêu cầu user xem log trước khi tiếp |
 
-### 4.6: Dry Run mode
+### 4.9: Dry Run mode
 
-- Toggle để chạy giả lập (không gọi API thật)
-- Log ra các bước sẽ làm để debug
+- Toggle trong Settings
+- Khi bật: KHÔNG gọi FB API, chỉ log ra caption / comment / thứ tự batch sẽ chạy
+- Hữu ích test variant logic, batch logic trước khi chạy thật
 
 ## 🎯 MODULE 5: ĐẶT LỊCH ĐĂNG BÀI
 
@@ -848,17 +1134,33 @@ Hiển thị **progress bar** realtime trên Streamlit UI.
 ### 6.2: Lịch sử chi tiết
 
 Bảng với filter:
+
 - Theo ngày (date range)
 - Theo page
-- Theo status (all / success / failed)
-- Search theo nội dung
+- Theo status (all / success / partial / failed)
+- Search theo caption hoặc Shopee link
+- Filter theo `sheet_row_index` (tìm lại bài đã đăng từ Sheet row nào)
+
+Mỗi dòng hiển thị:
+
+- **Caption** (rút gọn)
+- **Thumbnail video** gốc (từ link YouTube/TikTok oEmbed)
+- **Link video gốc** — click mở tab mới
+- **Số page success / total** (vd: 48/50)
+- **Ngày đăng**
+- Button **"Xem chi tiết"**
 
 Click 1 bài → modal chi tiết:
-- Nội dung đã đăng
-- Thumbnail ảnh
-- Danh sách page + FB post ID (có **link mở Facebook**)
-- Danh sách comment đã post + thời gian
-- Lỗi (nếu có) + stack trace
+
+- Caption gốc + video link + Shopee link
+- Bảng 50 page với các cột:
+  - Tên page
+  - Caption thực tế đã đăng (sau biến thể)
+  - Status (✅/❌)
+  - **Link FB post** (mở bài trên Facebook)
+  - **Comment đã post** (text + Shopee link)
+  - Lỗi (nếu có)
+- Link mở lại **Sheet row** gốc
 
 ### 6.3: Export log
 
@@ -866,14 +1168,33 @@ Export ra file **CSV** / **Excel**
 
 ## 🎯 MODULE 7: CÀI ĐẶT (SETTINGS)
 
-### 7.1: Cài đặt chung
+### 7.1: Google Sheets
+
+| Setting | Kiểu | Mô tả |
+|---|---|---|
+| Credentials file | File upload | Upload `credentials.json` → lưu vào `data/` |
+| Sheet ID | Text | Copy từ URL Sheet |
+| Tab name | Text | Mặc định `posts` |
+| Test connection | Button | Thử mở Sheet + verify 7 cột header |
+| Sync now | Button | Fetch pending rows ngay |
+
+### 7.2: Batch posting
 
 | Setting | Kiểu | Mặc định |
 |---|---|---|
-| Delay comment min | Number | 15s |
-| Delay comment max | Number | 30s |
-| Delay page min | Number | 60s |
-| Delay page max | Number | 120s |
+| Batch size | Number | 10 page / batch |
+| Min delay giữa batch (giây) | Number | 180 |
+| Max delay giữa batch (giây) | Number | 300 |
+| Min delay trong batch (giây) | Number | 2 |
+| Max delay trong batch (giây) | Number | 8 |
+| Min delay comment (giây) | Number | 15 |
+| Max delay comment (giây) | Number | 30 |
+
+### 7.3: Nội dung & an toàn
+
+| Setting | Kiểu | Mặc định |
+|---|---|---|
+| Biến thể nội dung mặc định | Toggle | On |
 | Giới hạn bài/page/ngày | Number | 20 |
 | Tự động retry khi lỗi | Toggle | On |
 | Số lần retry tối đa | Number | 3 |
@@ -968,43 +1289,49 @@ Tổng thời gian dự kiến: **~6.5 ngày** cho 1 người full-time.
 ### Deliverable
 UI Streamlit có tab "Fanpages" với đầy đủ chức năng thêm/sửa/xóa/import page.
 
-## Sprint 2 — Comment Template + UI Core (1 ngày)
+## Sprint 2 — Google Sheets Integration + UI Core (1 ngày)
 
-**Mục tiêu**: Quản lý template comment + dựng layout UI chính.
+**Mục tiêu**: Kết nối Sheet làm nguồn nội dung + dựng layout UI chính.
 
 ### Tasks
 
-- [ ] Module 2: Quản lý mẫu comment
+- [ ] Module 2: Google Sheets client (auth, fetch pending, update row)
+- [ ] Form config Sheet (credentials upload, Sheet ID, test connection)
 - [ ] Tạo layout Streamlit với sidebar menu:
   - 📋 Fanpages
-  - 💬 Mẫu Comment
+  - 📊 Google Sheet
   - ✏️ Tạo Bài
   - ⏰ Lịch Đăng
-  - 📊 Lịch Sử
+  - 📜 Lịch Sử
   - ⚙️ Cài Đặt
 
 ### Deliverable
-UI hoàn chỉnh với sidebar, có thể quản lý page + template.
 
-## Sprint 3 — Engine Đăng Bài (2 ngày)
+UI hoàn chỉnh với sidebar, kết nối được Sheet, đọc list pending rows.
 
-**Mục tiêu**: Core functionality — đăng bài + comment tự động.
+## Sprint 3 — Engine Đăng Bài Batch Mode (2 ngày)
+
+**Mục tiêu**: Core functionality — đăng 50 page theo batch + 1 comment/page.
 
 ### Tasks Ngày 1
 
-- [ ] Module 3: Form tạo bài đăng
-- [ ] Xử lý ảnh: resize, nén, convert HEIC
+- [ ] Module 3: Form tạo bài từ Sheet row (pre-fill caption, video, Shopee)
+- [ ] Service `variant.py`: biến thể emoji/câu mở-kết/hashtag
+- [ ] Preview caption + thumbnail video (oEmbed YT/TikTok)
 
 ### Tasks Ngày 2
 
-- [ ] Module 4: Engine đăng bài
-  - `poster.py`: upload ảnh, đăng bài, comment loop
+- [ ] Module 4: Engine đăng bài batch mode
+  - `poster.py`: post 1 page (caption + video link) + 1 comment (text + Shopee link)
+  - `batch_runner.py`: ThreadPoolExecutor 10 page/batch, delay 3–5 phút giữa batch
   - Retry logic + error handling
-  - Progress bar realtime
-- [ ] Test với **1 page** trước, sau đó **multi-page**
+  - Progress bar realtime theo batch
+- [ ] Service `sheets_client.py`: update row sau khi đăng xong
+- [ ] Test với **2 page Dry Run** → **1 batch thật 10 page** → **full 50 page**
 
 ### Deliverable
-Đăng được bài + comment tự động lên nhiều page.
+
+Click 1 Sheet row → tool đăng lên 50 page theo batch → update Sheet cột E/F/G.
 
 ## Sprint 4 — Đặt Lịch (1 ngày)
 
@@ -1055,9 +1382,10 @@ File `FBAutoPost.exe` chạy được trên máy không cài Python.
 
 Nếu muốn rút ngắn, MVP chỉ cần **Sprint 1 + 2 + 3** (~4 ngày):
 
-- Quản lý page
-- Quản lý comment
-- Đăng bài + comment thủ công (không có đặt lịch)
+- Quản lý 50+ page từ nhiều tài khoản
+- Kết nối Google Sheet làm nguồn nội dung
+- Đăng 1 row Sheet → 50 page theo batch + 1 comment Shopee/page
+- Update Sheet tự động sau khi đăng (không có đặt lịch)
 
 ---
 
@@ -1065,39 +1393,53 @@ Nếu muốn rút ngắn, MVP chỉ cần **Sprint 1 + 2 + 3** (~4 ngày):
 
 ## 6.1: Tránh bị Facebook chặn / giảm reach
 
-### Giới hạn khuyến nghị
+### Giới hạn khuyến nghị (Cấp 2 — Cân bằng)
 
 | Hành vi | Giới hạn an toàn |
 |---|---|
-| Delay giữa các comment | **15–30 giây** (random) |
-| Delay giữa các page | **60–120 giây** (random) |
+| Batch size | **10 page** chạy song song / batch |
+| Delay giữa các batch | **180–300 giây** (3–5 phút, random) |
+| Delay trong 1 batch | **2–8 giây** stagger giữa các page |
+| Delay comment sau post | **15–30 giây** (random) |
+| Số comment / bài | **1 comment** (link Shopee) |
 | Số bài đăng / page / ngày | **< 20 bài** |
-| Số comment / bài | **5–10 comment** |
-| Số lần đăng liên tiếp trong giờ | **< 5 bài** |
+| Số lần đăng liên tiếp trong giờ | **< 5 bài / page** |
+| Tổng thời gian đăng 50 page | **~20 phút / đợt** |
 
 ### Best practices
 
-- ✅ **Đa dạng nội dung comment** — ít nhất 20-30 mẫu khác nhau cho mỗi nhóm
-- ✅ **Dùng link rút gọn** (s.shopee.vn, bit.ly)
-- ✅ **Đăng vào giờ cao điểm**: 7-9h sáng, 12-13h trưa, 19-22h tối
-- ✅ **Rải đều các page** — đừng đăng dồn 1 page trong thời gian ngắn
+- ✅ **Bật Biến thể nội dung** (mặc định ON) — 50 page nhận 50 version hơi khác nhau
+- ✅ **Mỗi Sheet row = 1 sản phẩm/video** → comment Shopee phải match đúng sản phẩm
+- ✅ **Dùng link rút gọn** Shopee (`s.shopee.vn/...`) thay vì URL dài
+- ✅ **Đăng vào giờ cao điểm**: 7–9h sáng, 12–13h trưa, 19–22h tối
+- ✅ **Giãn giữa các đợt đăng** — nếu đăng đợt 2 trong ngày, cách đợt 1 ≥ 3 tiếng
+- ✅ **Xem log Dashboard** sau mỗi đợt — nếu >10% page fail → dừng lại điều tra
 
 ### Những thứ cần tránh
 
+- ❌ **Đăng y hệt 100%** trên 50 page cùng 1 thời điểm (tắt biến thể chỉ khi thực sự cần)
 - ❌ Comment có **nhiều emoji liên tục** (5+ emoji cạnh nhau)
 - ❌ **Từ khóa nhạy cảm**: "mua ngay", "giảm 90%", "CLICK NGAY", viết hoa toàn bộ
-- ❌ **Post trùng nội dung y hệt** qua nhiều page cùng lúc
-- ❌ **Delay quá ngắn** (< 10s) → dễ bị flag là bot
+- ❌ **Giảm delay giữa batch** xuống dưới 180 giây → dễ bị flag coordinated behavior
+- ❌ **Tăng batch size** lên trên 10 → 15+ page song song dễ bị soi
 - ❌ **Đăng 24/7 không nghỉ** → tạo pattern bất thường
+- ❌ **Cùng 1 link Shopee** cho nhiều sản phẩm khác nhau → FB dễ phát hiện affiliate spam
 
 ## 6.2: Bảo mật
 
 ### Không bao giờ commit / share các file sau
 
-- `.env` — chứa App Secret
-- `data/posts.db` — chứa tất cả Page Access Token
+- `.env` — chứa App Secret + Google Sheet ID
+- `data/credentials.json` — Google Service Account key (bị lộ = mất quyền access Sheet)
+- `data/posts.db` — chứa tất cả Page Access Token + dữ liệu đăng
 - `data/uploads/` — có thể chứa ảnh nhạy cảm
 - `logs/app.log` — có thể lộ token
+
+### Google Service Account
+
+- Nếu `credentials.json` **bị lộ** → vào Cloud Console → **Delete Key cũ + tạo Key mới** → thay file trong `data/`
+- Share Sheet chỉ cho đúng **email service account**, KHÔNG share public
+- Mỗi project nên có **1 service account riêng**, đừng reuse
 
 ### Access Token
 
@@ -1152,23 +1494,28 @@ def mask_token(token: str) -> str:
 ### Khi tool không hoạt động
 
 1. **Xem log** tại `logs/app.log`
-2. **Kiểm tra token** có còn valid không (thử Graph API Explorer)
-3. **Test Dry Run** để xem logic đúng chưa
-4. **Kiểm tra kết nối mạng** và firewall
-5. **Update thư viện** nếu lâu chưa update:
-   ```
+2. **Kiểm tra FB token** có còn valid không (thử Graph API Explorer)
+3. **Test Google Sheet connection** ở tab Settings → Test connection
+4. **Verify Sheet header** đúng 7 cột (A–G) + service account đã được share
+5. **Test Dry Run** để xem logic biến thể + batch đúng chưa
+6. **Kiểm tra kết nối mạng** và firewall
+7. **Update thư viện** nếu lâu chưa update:
+
+   ```bash
    pip install -r requirements.txt --upgrade
    ```
 
 ## 6.6: Tài liệu tham khảo
 
-- Facebook Graph API: https://developers.facebook.com/docs/graph-api
-- Page Posts API: https://developers.facebook.com/docs/pages-api/posts
-- Page Comments API: https://developers.facebook.com/docs/graph-api/reference/v19.0/object/comments
-- Streamlit docs: https://docs.streamlit.io
-- SQLAlchemy docs: https://docs.sqlalchemy.org
-- APScheduler docs: https://apscheduler.readthedocs.io
-- PyInstaller docs: https://pyinstaller.org
+- Facebook Graph API: <https://developers.facebook.com/docs/graph-api>
+- Page Posts API: <https://developers.facebook.com/docs/pages-api/posts>
+- Page Comments API: <https://developers.facebook.com/docs/graph-api/reference/v19.0/object/comments>
+- Google Sheets API: <https://developers.google.com/sheets/api>
+- gspread docs: <https://docs.gspread.org>
+- Streamlit docs: <https://docs.streamlit.io>
+- SQLAlchemy docs: <https://docs.sqlalchemy.org>
+- APScheduler docs: <https://apscheduler.readthedocs.io>
+- PyInstaller docs: <https://pyinstaller.org>
 
 ## 6.7: Pháp lý
 
