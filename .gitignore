@@ -1,0 +1,38 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Environment
+.env
+
+# Secrets
+data/credentials.json
+*credentials*.json
+*service-account*.json
+
+# Database & user data
+data/posts.db
+data/posts.db-journal
+data/uploads/
+
+# Logs
+logs/
+
+# Build artifacts
+dist/
+build/
+*.spec
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
