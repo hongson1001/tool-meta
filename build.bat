@@ -1,5 +1,5 @@
 @echo off
-echo === FB Auto Post Tool — PyInstaller build ===
+echo === FB Auto Post Tool ? PyInstaller build ===
 echo.
 
 if exist build rmdir /s /q build
