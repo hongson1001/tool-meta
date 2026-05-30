@@ -12,29 +12,33 @@ if errorlevel 1 goto NO_PYTHON
 
 REM Setup venv neu chua co
 if not exist venv\Scripts\activate.bat goto SETUP_VENV
+REM Check streamlit da cai chua (truong hop venv tao roi nhung pip install fail)
+if not exist venv\Scripts\streamlit.exe goto INSTALL_DEPS
 goto SETUP_ENV
 
 :NO_PYTHON
-echo [LOI] Chua cai dat Python. Hay cai Python 3.11 tu:
-echo       https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
+echo [LOI] Chua cai dat Python. Hay cai Python 3.12 tu:
+echo       https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe
 echo.
 echo Nho TICK "Add Python to PATH" khi cai.
 pause
 exit /b 1
 
 :SETUP_VENV
-echo [SETUP] Lan dau chay - dang cai dat moi truong...
-py -3.11 -m venv venv
+echo [SETUP] Lan dau chay - dang tao moi truong Python...
+py -3.12 -m venv venv
 if errorlevel 1 goto VENV_FAIL
-echo [SETUP] Dang cai thu vien - mat 3 den 5 phut...
+
+:INSTALL_DEPS
+echo [SETUP] Dang cai thu vien - mat 3 den 5 phut (se hien tien do)...
 call venv\Scripts\activate.bat
-python -m pip install --upgrade pip --quiet
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+pip install -r requirements.txt --timeout 120 --retries 3
 if errorlevel 1 goto PIP_FAIL
 goto SETUP_ENV
 
 :VENV_FAIL
-echo [LOI] Khong tao duoc venv. Hay dam bao Python 3.11 da cai.
+echo [LOI] Khong tao duoc venv. Hay dam bao Python 3.12 da cai.
 pause
 exit /b 1
 
